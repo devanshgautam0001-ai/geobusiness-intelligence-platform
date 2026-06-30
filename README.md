@@ -1,6 +1,6 @@
 ## 🔗 Quick Links
 
-- 🌐 Live Demo: [https://YOUR-LIVE-DEMO](https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app)
+- 🌐 Live Demo: https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app
 - 📂 Repository: https://github.com/USERNAME/REPO
 - 🐛 Report Bug
 - 💡 Request Feature
