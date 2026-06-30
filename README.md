@@ -32,17 +32,12 @@
 
 (https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app)
 
-```
-``` 
----
-(https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app)
 
 ### 💻 GitHub Repository
 
-```
-```
+
 https://github.com/devanshgautam0001-ai/geobusiness-intelligence-platform.git
----
+
 
 </div>
 
