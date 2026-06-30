@@ -77,8 +77,12 @@ src/
 ## Author
 
 **Devansh Gautam**
-Live Demo:https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app
+
 GitHub: https://github.com/devanshgautam0001-ai
+
+
+Live Demo:https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app
+
 
 ## License
 
