@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  geobi-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geobi_platform_app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=production_geobi_secret_key_99182
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-MY_GEMINI_API_KEY}
+    restart: always
+    volumes:
+      - geobi_data:/app/backend/data/processed
+
+volumes:
+  geobi_data:
+    driver: local

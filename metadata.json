@@ -1,0 +1,6 @@
+{
+  "name": "GeoBusiness Intelligence Platform",
+  "description": "AI-Powered Google Maps Business Analytics & Digital Opportunity Recommendation System for Chandigarh and Mohali cafes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
