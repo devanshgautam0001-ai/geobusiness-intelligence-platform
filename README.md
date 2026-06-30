@@ -33,15 +33,12 @@
 (https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app)
 
 ```
-https://YOUR-LIVE-DEMO-LINK
 ```
-
 ---
 
 ### 💻 GitHub Repository
 
 ```
-https://github.com/YOUR_USERNAME/YOUR_REPOSITORY
 ```
 
 ---
