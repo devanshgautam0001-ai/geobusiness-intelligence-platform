@@ -1,20 +1,85 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# GeoBusiness Intelligence Platform
 
-# Run and deploy your AI Studio app
+## Enterprise AI-Powered GeoSpatial Business Intelligence Platform
 
-This contains everything you need to run your app locally.
+### Overview
 
-View your app in AI Studio: https://ai.studio/apps/b421c757-288e-4703-9379-3cf9520912fe
+GeoBusiness Intelligence Platform is an enterprise SaaS application that
+helps consultants and businesses analyze market opportunities using AI,
+GIS visualization, business intelligence dashboards, and lead generation
+tools.
 
-## Run Locally
+## Features
 
-**Prerequisites:**  Node.js
+-   Interactive GIS Market Intelligence Map
+-   AI Business Consultant
+-   Lead Generation Engine
+-   Business Opportunity Scoring
+-   Competitor Analysis
+-   Executive Reports
+-   Power BI CSV Export
+-   Developer Console
+-   Role-Based Authentication
+-   Responsive Enterprise UI
 
+## Tech Stack
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+**Frontend:** React, TypeScript, Vite, Tailwind CSS, Lucide React
+
+**Backend:** Node.js, Express
+
+## Installation
+
+``` bash
+git clone <repository-url>
+cd geo-business-intelligence-platform
+npm install
+npm run dev
+```
+
+## Build
+
+``` bash
+npm run build
+npm run preview
+```
+
+## Project Structure
+
+``` text
+src/
+ ├── components/
+ ├── utils/
+ ├── assets/
+ ├── App.tsx
+ ├── main.tsx
+ └── index.css
+```
+
+## Modules
+
+-   Insights Dashboard
+-   Interactive GIS Map
+-   AI Consultant
+-   Lead Generation
+-   Executive Reporting
+-   Developer Console
+
+## Roadmap
+
+-   Google Maps Integration
+-   Gemini AI
+-   PostgreSQL
+-   JWT Authentication
+-   Stripe Billing
+-   Multi-tenant SaaS
+
+## Author
+
+**Devansh Gautam**
+Live Demo:https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app
+GitHub: https://github.com/devanshgautam0001-ai
+
+## License
+
+MIT License
