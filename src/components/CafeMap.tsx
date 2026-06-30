@@ -1,10 +1,20 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   MapPin, Compass, Info, CheckCircle2, Sparkles, Filter, 
   ZoomIn, ZoomOut, Sliders, Layers, Navigation, Eye, Map, 
   ChevronRight, Car, Clock, Phone, Globe, Star
 } from 'lucide-react';
 import { Cafe } from '../types';
+import L from 'leaflet';
+
+// Ensure L is globally available for plugins that look for window.L
+if (typeof window !== 'undefined') {
+  (window as any).L = L;
+}
+
+// Dynamically import Leaflet plugins (required in browser runtime)
+import 'leaflet.markercluster';
+import 'leaflet.heat';
 
 interface CafeMapProps {
   cafes: Cafe[];
@@ -12,50 +22,35 @@ interface CafeMapProps {
 }
 
 export default function CafeMap({ cafes, onSelectCafe }: CafeMapProps) {
-  const [hoveredCafe, setHoveredCafe] = useState<Cafe | null>(null);
   const [selectedCafe, setSelectedCafe] = useState<Cafe | null>(null);
   
   // Interactive Controls State
-  const [mapZoom, setMapZoom] = useState<number>(1); // zoom level multiplier
   const [filterType, setFilterType] = useState<'all' | 'alpha' | 'beta' | 'benchmark'>('all');
-  const [radiusCenter, setRadiusCenter] = useState<string>('Sector 35, Chandigarh');
-  const [radiusKm, setRadiusKm] = useState<number>(20); // Slider value (1km to 5km)
+  const [radiusKm, setRadiusKm] = useState<number>(15); // Slider value in km
   const [showRadiusCircle, setShowRadiusCircle] = useState<boolean>(true);
   const [enableHeatmap, setEnableHeatmap] = useState<boolean>(false);
-  const [enableClustering, setEnableClustering] = useState<boolean>(false);
+  const [enableClustering, setEnableClustering] = useState<boolean>(true);
   const [showDirections, setShowDirections] = useState<boolean>(false);
+  const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
 
-  // Geographic coordinates boundaries for Chandigarh & Mohali region
-  const MIN_LAT = 30.660;
-const MAX_LAT = 30.770;
-
-const MIN_LNG = 76.700;
-const MAX_LNG = 76.810;
+  // Map reference hooks
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  
+  // Layer groups to manage addition/removal dynamically
+  const markersGroupRef = useRef<L.LayerGroup | null>(null);
+  const clusterGroupRef = useRef<any | null>(null);
+  const heatLayerRef = useRef<any | null>(null);
+  const circleLayerRef = useRef<L.Circle | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
 
   // Center coordinate of Chandigarh Sector 35 for Radius searches
   const CENTER_LAT = 30.7220;
   const CENTER_LNG = 76.7680;
 
-  // Map latitude & longitude coordinates to visual percentage values, with zoom adjustment
-  const getCoordinates = (lat: number, lng: number) => {
-    // x represents longitude mapped left-to-right (0 to 100)
-    let x = ((lng - MIN_LNG) / (MAX_LNG - MIN_LNG)) * 100;
-    // y represents latitude mapped top-to-bottom (100 to 0)
-    let y = (1 - (lat - MIN_LAT) / (MAX_LAT - MIN_LAT)) * 100;
-    
-    // Apply simulated zoom scaling relative to center (50%)
-   x = 50 + (x - 50) * mapZoom;
-   y = 50 + (y - 50) * mapZoom;
-
-   return {
-   x: Math.max(3, Math.min(x, 97)),
-   y: Math.max(3, Math.min(y, 97))
-   }
-  };
-
   // Distance helper (Haversine formula approximation)
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // km
+    const R = 6371; // Earth's radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = 
@@ -66,67 +61,315 @@ const MAX_LNG = 76.810;
     return R * c;
   };
 
-  // Filtered and clustered cafes
+  // 1. Filtered cafes calculation
   const processedCafes = useMemo(() => {
     return cafes.filter(cafe => {
-      // 1. Filter by category type
+      // Category filter
       if (filterType === 'alpha' && cafe.growthOpportunityScore < 75) return false;
       if (filterType === 'beta' && (cafe.growthOpportunityScore < 55 || cafe.growthOpportunityScore >= 75)) return false;
       if (filterType === 'benchmark' && cafe.growthOpportunityScore >= 55) return false;
 
-      // 2. Filter by radius from Center (Sector 35)
-      const dist = calculateDistance(CENTER_LAT, CENTER_LNG, cafe.latitude, cafe.longitude);
-      //if (dist > radiusKm) return false;
+      // Distance radius filter from Sector 35
+      if (showRadiusCircle) {
+        const dist = calculateDistance(CENTER_LAT, CENTER_LNG, cafe.latitude, cafe.longitude);
+        if (dist > radiusKm) return false;
+      }
 
       return true;
     });
-  }, [cafes, filterType, radiusKm, ]);
+  }, [cafes, filterType, radiusKm, showRadiusCircle]);
 
   // Handle Marker Pin Click
   const handleMarkerClick = (cafe: Cafe) => {
     setSelectedCafe(cafe);
     onSelectCafe(cafe.id);
     setShowDirections(true);
+
+    if (mapRef.current) {
+      mapRef.current.setView([cafe.latitude, cafe.longitude], 15, { animate: true });
+    }
   };
 
-  // Center Coordinates mapping
-  const centerCoords = getCoordinates(CENTER_LAT, CENTER_LNG);
+  // 2. Initialize Map once on mount
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
 
-  // Simulated Clustering visualization calculation
-  const clusters = useMemo(() => {
-    if (!enableClustering) return [];
-    // Divide map area into 4 quadrants and average their spots
-    const quadrantDefinitions = [
-      { name: 'Chandigarh North', minX: 0, maxX: 50, minY: 0, maxY: 50 },
-      { name: 'Chandigarh South', minX: 50, maxX: 100, minY: 0, maxY: 50 },
-      { name: 'Mohali West', minX: 0, maxX: 50, minY: 50, maxY: 100 },
-      { name: 'Mohali East', minX: 50, maxX: 100, minY: 50, maxY: 100 },
-    ];
+    // Initialize map centered at Chandigarh
+    const map = L.map(mapContainerRef.current, {
+      center: [30.7333, 76.7794],
+      zoom: 13,
+      zoomControl: false,
+      attributionControl: true
+    });
 
-    return quadrantDefinitions.map(quad => {
-      const itemsInQuad = processedCafes.filter(c => {
-        const coords = getCoordinates(c.latitude, c.longitude);
-        return coords.x >= quad.minX && coords.x < quad.maxX && coords.y >= quad.minY && coords.y < quad.maxY;
+    // Dark-themed tiles to match the futuristic app look
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // Initialize layer groups
+    markersGroupRef.current = L.layerGroup().addTo(map);
+
+    mapRef.current = map;
+
+    // Ask browser Geolocation permission
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          setUserCoords([latitude, longitude]);
+        },
+        (error) => {
+          console.warn('Geolocation permission not granted or errored:', error);
+        }
+      );
+    }
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  // 3. Handle browser geolocation marker addition
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !userCoords) return;
+
+    if (userMarkerRef.current) {
+      map.removeLayer(userMarkerRef.current);
+    }
+
+    const userIcon = L.divIcon({
+      html: `
+        <div class="relative w-4 h-4">
+          <div class="absolute inset-0 rounded-full bg-[#4F8CFF] animate-ping opacity-75"></div>
+          <div class="absolute inset-0.5 rounded-full bg-[#4F8CFF] border-2 border-white shadow-[0_0_10px_#4F8CFF]"></div>
+        </div>
+      `,
+      className: 'user-location-marker',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+
+    const marker = L.marker(userCoords, { icon: userIcon })
+      .addTo(map)
+      .bindTooltip('<div class="font-mono text-[9px] uppercase tracking-wider font-bold">Your Location</div>', { direction: 'top' });
+
+    userMarkerRef.current = marker;
+  }, [userCoords]);
+
+  // 4. Update markers, circle, clustering, and heatmaps whenever states change
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Reset standard markers group
+    if (markersGroupRef.current) {
+      markersGroupRef.current.clearLayers();
+    }
+
+    // Clear and remove previous cluster group
+    if (clusterGroupRef.current) {
+      map.removeLayer(clusterGroupRef.current);
+      clusterGroupRef.current = null;
+    }
+
+    // Clear and remove previous heat layer
+    if (heatLayerRef.current) {
+      map.removeLayer(heatLayerRef.current);
+      heatLayerRef.current = null;
+    }
+
+    // Clear and remove previous circle layer
+    if (circleLayerRef.current) {
+      map.removeLayer(circleLayerRef.current);
+      circleLayerRef.current = null;
+    }
+
+    // A. Draw Radius Circle if enabled
+    if (showRadiusCircle) {
+      const circle = L.circle([CENTER_LAT, CENTER_LNG], {
+        radius: radiusKm * 1000, // converted to meters
+        color: 'rgba(124, 92, 255, 0.4)',
+        fillColor: 'rgba(124, 92, 255, 0.05)',
+        fillOpacity: 0.1,
+        weight: 1.5,
+        dashArray: '5, 5'
+      }).addTo(map);
+      circleLayerRef.current = circle;
+    }
+
+    // B. Build Custom HTML Icons & Bind Marker Events
+    const createMarker = (cafe: Cafe) => {
+      const isSelected = selectedCafe?.id === cafe.id;
+      
+      let pinColor = '#32D583'; // Stable Benchmark
+      let glowColor = 'rgba(50, 213, 131, 0.4)';
+      let pulseRing = '';
+
+      if (cafe.growthOpportunityScore >= 75) {
+        pinColor = '#EF4444'; // Alpha Priority
+        glowColor = 'rgba(239, 68, 68, 0.7)';
+        pulseRing = `<span class="absolute w-7 h-7 rounded-full bg-[#EF4444]/20 animate-ping pointer-events-none"></span>`;
+      } else if (cafe.growthOpportunityScore >= 55) {
+        pinColor = '#F59E0B'; // Beta Growth
+        glowColor = 'rgba(245, 158, 11, 0.5)';
+        pulseRing = `<span class="absolute w-6 h-6 rounded-full bg-[#F59E0B]/15 animate-ping pointer-events-none"></span>`;
+      }
+
+      const htmlContent = `
+        <div class="relative flex items-center justify-center transition-all duration-300 ${isSelected ? 'scale-125 z-[1000]' : ''}">
+          ${pulseRing}
+          <div 
+            style="background-color: ${pinColor}; box-shadow: 0 0 10px ${glowColor};"
+            class="w-3.5 h-3.5 rounded-full border border-black/80 transition-all duration-300 relative ${isSelected ? 'w-5 h-5 ring-4 ring-white/20' : 'hover:scale-125'}"
+          >
+            ${isSelected ? '<div class="absolute inset-1 rounded-full bg-white animate-pulse"></div>' : ''}
+          </div>
+        </div>
+      `;
+
+      const markerIcon = L.divIcon({
+        html: htmlContent,
+        className: 'custom-cafe-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
       });
 
-      if (itemsInQuad.length === 0) return null;
+      const marker = L.marker([cafe.latitude, cafe.longitude], { icon: markerIcon });
 
-      // Find average lat/lng for cluster center
-      const avgLat = itemsInQuad.reduce((sum, item) => sum + item.latitude, 0) / itemsInQuad.length;
-      const avgLng = itemsInQuad.reduce((sum, item) => sum + item.longitude, 0) / itemsInQuad.length;
-      const avgOpp = Math.round(itemsInQuad.reduce((sum, item) => sum + item.growthOpportunityScore, 0) / itemsInQuad.length);
+      // Custom Dark Futuristic Tooltip Layout
+      const tooltipContent = `
+        <div class="p-1.5 font-mono text-xs space-y-1">
+          <h5 class="font-bold text-white leading-tight truncate text-[11px]">${cafe.name}</h5>
+          <p class="text-[8px] text-white/40 uppercase tracking-widest font-extrabold">${cafe.category} • ${cafe.area}</p>
+          <div class="grid grid-cols-2 gap-3 mt-2.5 pt-2 border-t border-white/[0.06] text-[8px] uppercase tracking-widest font-extrabold">
+            <div>
+              <span class="text-white/40 block">Digital Presence</span>
+              <span class="text-[#4F8CFF] font-bold block mt-0.5">${cafe.digitalPresenceScore}/100</span>
+            </div>
+            <div>
+              <span class="text-white/40 block">Growth Opp</span>
+              <span class="text-[#7C5CFF] font-bold block mt-0.5">${cafe.growthOpportunityScore}/100</span>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-white/[0.06] flex justify-between text-[8px] text-white/30 font-bold uppercase tracking-wider">
+            <span>★ ${cafe.rating.toFixed(1)}</span>
+            <span>${cafe.reviews} reviews</span>
+          </div>
+        </div>
+      `;
 
-      return {
-        id: `cluster_${quad.name.replace(/\s+/g, '_')}`,
-        name: quad.name,
-        count: itemsInQuad.length,
-        latitude: avgLat,
-        longitude: avgLng,
-        avgOpportunity: avgOpp
-      };
-    }).filter(Boolean);
+      marker.bindTooltip(tooltipContent, {
+        direction: 'top',
+        className: 'custom-tooltip-panel',
+        offset: [0, -6],
+        opacity: 0.98
+      });
 
-  }, [processedCafes, enableClustering, mapZoom]);
+      marker.on('click', () => {
+        handleMarkerClick(cafe);
+      });
+
+      return marker;
+    };
+
+    // C. Heatmap layer rendering
+    if (enableHeatmap) {
+      const heatPoints = processedCafes.map(cafe => [
+        cafe.latitude,
+        cafe.longitude,
+        cafe.growthOpportunityScore / 100 // mapped to intensity 0-1
+      ]);
+
+      const heatLayer = (L as any).heatLayer(heatPoints, {
+        radius: 35,
+        blur: 20,
+        maxZoom: 17,
+        max: 1.0,
+        gradient: {
+          0.3: 'rgba(79, 140, 255, 0.6)',
+          0.6: 'rgba(245, 158, 11, 0.8)',
+          1.0: 'rgba(239, 68, 68, 0.95)'
+        }
+      }).addTo(map);
+
+      heatLayerRef.current = heatLayer;
+    }
+
+    // D. Clustering or standard markers rendering
+    if (enableClustering && !enableHeatmap) {
+      const clusterGroup = (L as any).markerClusterGroup({
+        showCoverageOnHover: false,
+        zoomToBoundsOnClick: true,
+        animate: true,
+        maxClusterRadius: 40,
+        iconCreateFunction: (cluster: any) => {
+          const childCount = cluster.getChildCount();
+          return L.divIcon({
+            html: `
+              <div class="w-8 h-8 rounded-full bg-[#F59E0B]/15 border border-[#F59E0B]/40 flex items-center justify-center relative shadow-lg">
+                <span class="text-[10px] font-mono text-[#F59E0B] font-bold">${childCount}</span>
+                <span class="absolute -inset-1 rounded-full border border-[#F59E0B]/20 animate-pulse" />
+              </div>
+            `,
+            className: 'custom-cluster-icon',
+            iconSize: [32, 32]
+          });
+        }
+      });
+
+      processedCafes.forEach(cafe => {
+        const marker = createMarker(cafe);
+        clusterGroup.addLayer(marker);
+      });
+
+      map.addLayer(clusterGroup);
+      clusterGroupRef.current = clusterGroup;
+    } else {
+      // Direct marker rendering if clustering is disabled
+      processedCafes.forEach(cafe => {
+        const marker = createMarker(cafe);
+        if (markersGroupRef.current) {
+          markersGroupRef.current.addLayer(marker);
+        }
+      });
+    }
+
+    // E. Auto fit bounds of active filtered cafes
+    if (processedCafes.length > 0) {
+      const latLngs = processedCafes.map(c => [c.latitude, c.longitude] as [number, number]);
+      const bounds = L.latLngBounds(latLngs);
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    }
+
+  }, [processedCafes, enableClustering, enableHeatmap, showRadiusCircle, radiusKm, selectedCafe]);
+
+  // 5. Invalidate map size on window resizing or layout columns shifts
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 320); // slightly delayed to match CSS layout transitions
+
+    return () => clearTimeout(timer);
+  }, [selectedCafe, showDirections]);
+
+  // Handle zooming controls manually
+  const zoomIn = () => {
+    mapRef.current?.zoomIn();
+  };
+
+  const zoomOut = () => {
+    mapRef.current?.zoomOut();
+  };
 
   return (
     <div className="glass-panel rounded-2xl p-6 sm:p-8 border border-white/[0.06] shadow-2xl animate-fadeIn relative space-y-6">
@@ -139,7 +382,7 @@ const MAX_LNG = 76.810;
             Geographical Market Intelligence Grid
           </h3>
           <p className="text-[10px] font-mono text-white/40 uppercase tracking-widest mt-1">
-            Chandigarh & Mohali coordinate distribution plot mapping opportunities
+            Real GIS telemetry mapping active cafe coordinates across Chandigarh & Mohali
           </p>
         </div>
 
@@ -201,17 +444,17 @@ const MAX_LNG = 76.810;
             <input
               type="range"
               min="1"
-              max="6"
-              step="0.5"
+              max="30"
+              step="1"
               value={radiusKm}
-              onChange={e => setRadiusKm(parseFloat(e.target.value))}
+              onChange={e => setRadiusKm(parseInt(e.target.value))}
               className="w-full h-1 bg-white/[0.08] rounded-lg appearance-none cursor-pointer accent-[#7C5CFF]"
             />
-            <div className="flex items-center justify-between text-[8px] font-mono text-white/30 uppercase">
+            <div className="flex items-center justify-between text-[8px] font-mono text-white/30 uppercase font-bold">
               <span>Center: Sector 35 Hub</span>
               <button 
                 onClick={() => setShowRadiusCircle(!showRadiusCircle)}
-                className={`hover:text-white transition-colors flex items-center gap-1 ${showRadiusCircle ? 'text-[#7C5CFF] font-bold' : ''}`}
+                className={`hover:text-white transition-colors flex items-center gap-1 cursor-pointer ${showRadiusCircle ? 'text-[#7C5CFF] font-bold' : ''}`}
               >
                 <Eye className="w-3 h-3" />
                 Radius overlay
@@ -262,191 +505,35 @@ const MAX_LNG = 76.810;
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         
         {/* Map Stage Canvas */}
-        <div className={`relative bg-[#050505] border border-white/[0.06] rounded-2xl overflow-hidden shadow-inner transition-all duration-500 min-h-[700px] w-full lg:col-span-${selectedCafe && showDirections ? '8' : '12'}`}>
+        <div className={`relative w-full h-[700px] lg:h-[80vh] overflow-hidden rounded-2xl bg-[#050505] border border-white/[0.06] shadow-inner transition-all duration-500 ${selectedCafe && showDirections ? 'lg:col-span-8' : 'lg:col-span-12'}`}>
           
-          {/* Simulated Heatmap glow layer */}
-          {enableHeatmap && (
-            <div className="absolute inset-0 pointer-events-none z-0 mix-blend-screen opacity-50">
-              {processedCafes.map(cafe => {
-                const { x, y } = getCoordinates(cafe.latitude, cafe.longitude);
-                return (
-                  <div
-                    key={`heat_${cafe.id}`}
-                    style={{ left: `${x}%`, top: `${y}%` }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full bg-[radial-gradient(circle,rgba(239,68,68,0.25)_0%,rgba(124,92,255,0.08)_40%,transparent_70%)] animate-pulse"
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          {/* SVG Grid Overlay */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30 z-0">
-            <defs>
-              <pattern id="gisPattern" width="30" height="30" patternUnits="userSpaceOnUse">
-                <path d="M 30 0 L 0 0 0 30" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#gisPattern)" />
-            
-            {/* Sector Guidelines */}
-            <line x1="50%" y1="0%" x2="50%" y2="100%" stroke="rgba(255,255,255,0.08)" strokeDasharray="5,5" strokeWidth="1.5" />
-            <line x1="0%" y1="50%" x2="100%" y2="50%" stroke="rgba(255,255,255,0.04)" strokeDasharray="3,3" strokeWidth="1" />
-          </svg>
-
-          {/* Radius circles overlay around Sector 35 */}
-          {showRadiusCircle && (
-            <div 
-              className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none border border-[#7C5CFF]/20 rounded-full bg-[#7C5CFF]/2 z-0 flex items-center justify-center animate-pulse"
+          {/* Real Leaflet Map Container Mount Point */}
+          <div className="w-full h-full flex-1 relative">
+            <div
+              ref={mapContainerRef}
+              className="w-full h-full"
               style={{
-                left: `${centerCoords.x}%`,
-                top: `${centerCoords.y}%`,
-                width: `${radiusKm * 120 * mapZoom}px`,
-                height: `${radiusKm * 120 * mapZoom}px`,
-                animationDuration: '6s'
+                width: "100%",
+                height: "100%"
               }}
-            >
-              <span className="text-[7px] font-mono text-[#7C5CFF] uppercase font-bold tracking-widest absolute top-2">Radius limit: {radiusKm}km</span>
-              {/* Radius Center Marker */}
-              <div className="w-2 h-2 rounded-full bg-[#7C5CFF] shadow-[0_0_10px_#7C5CFF]" />
-            </div>
-          )}
-
-          {/* Region Label Indicators */}
-          <div className="absolute top-4 left-6 pointer-events-none font-mono text-left z-10 select-none">
-            <p className="text-[9px] text-white/30 font-bold uppercase tracking-wider">CHANDIGARH SECTORS 14/15</p>
-            <p className="text-[7px] text-white/15 italic">Educational / PU Precinct</p>
-          </div>
-
-          <div className="absolute top-4 right-6 pointer-events-none font-mono text-right z-10 select-none">
-            <p className="text-[9px] text-white/30 font-bold uppercase tracking-wider">CHANDIGARH SECTORS 7/26</p>
-            <p className="text-[7px] text-white/15 italic">Culinary Benchmark Core</p>
-          </div>
-
-          <div className="absolute bottom-4 left-6 pointer-events-none font-mono text-left z-10 select-none">
-            <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest">MOHALI COMMERCIAL HUBS</p>
-            <p className="text-[7px] text-white/10 italic">Phases 3B2 / 5 / 7</p>
+            />
           </div>
 
           {/* Map Zoom Controls */}
           <div className="absolute bottom-5 right-5 flex flex-col gap-1.5 z-20">
             <button
-              onClick={() => setMapZoom(prev => Math.min(prev + 0.2, 3.0))}
+              onClick={zoomIn}
               className="p-2 bg-[#0E1117]/90 border border-white/[0.08] text-white hover:text-[#4F8CFF] hover:border-[#4F8CFF]/20 rounded-lg shadow-xl cursor-pointer transition-colors"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setMapZoom(prev => Math.max(prev - 0.2, 0.6))}
+              onClick={zoomOut}
               className="p-2 bg-[#0E1117]/90 border border-white/[0.08] text-white hover:text-[#4F8CFF] hover:border-[#4F8CFF]/20 rounded-lg shadow-xl cursor-pointer transition-colors"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
           </div>
-
-          {/* ACTIVE NODES */}
-          <div className="absolute inset-0 z-10 w-full h-full">
-            
-            {/* RENDER CLUSTERS */}
-            {enableClustering ? (
-              clusters.map((cl: any) => {
-                if (!cl) return null;
-                const { x, y } = getCoordinates(cl.latitude, cl.longitude);
-                return (
-                  <div
-                    key={cl.id}
-                    style={{ left: `${x}%`, top: `${y}%` }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 z-15 flex flex-col items-center justify-center cursor-pointer animate-fadeIn"
-                    onClick={() => {
-                      // Zoom in slightly on cluster click
-                      setMapZoom(prev => Math.min(prev + 0.3, 2.5));
-                      setEnableClustering(false);
-                    }}
-                  >
-                    <div className="w-8 h-8 rounded-full bg-[#F59E0B]/15 border border-[#F59E0B]/40 flex items-center justify-center relative shadow-lg group hover:scale-110 duration-300">
-                      <span className="text-[10px] font-mono text-[#F59E0B] font-bold">{cl.count}</span>
-                      <span className="absolute -inset-1 rounded-full border border-[#F59E0B]/20 animate-pulse" />
-                    </div>
-                    <span className="text-[6px] font-mono uppercase bg-black/60 px-1 py-0.2 rounded mt-1 border border-white/5 text-white/50">{cl.name}</span>
-                  </div>
-                );
-              })
-            ) : (
-              // RENDER SINGLE PLOTS
-              processedCafes.map(cafe => {
-                const { x, y } = getCoordinates(cafe.latitude, cafe.longitude);
-                const isHovered = hoveredCafe?.id === cafe.id;
-                const isSelected = selectedCafe?.id === cafe.id;
-
-                return (
-                  <div
-                    key={cafe.id}
-                    style={{
-                     left: `${x}%`,
-                    top: `${y}%`,
-                    transform: "translate(-50%, -50%)"
-                       }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer group"
-                    onMouseEnter={() => setHoveredCafe(cafe)}
-                    onMouseLeave={() => setHoveredCafe(null)}
-                    onClick={() => handleMarkerClick(cafe)}
-                  >
-                    {/* Ring indicator for target opportunity priorities */}
-                    {cafe.growthOpportunityScore >= 75 ? (
-                      <span className="absolute -inset-3.5 rounded-full bg-[#EF4444]/15 animate-ping pointer-events-none" />
-                    ) : cafe.growthOpportunityScore >= 55 ? (
-                      <span className="absolute -inset-3 rounded-full bg-[#F59E0B]/10 animate-ping pointer-events-none" />
-                    ) : null}
-
-                    {/* Interactive Pin Circle */}
-                    <div className={`rounded-full border border-black/90 transition-all duration-300 shadow-xl relative ${
-                      isHovered || isSelected ? 'w-5 h-5 ring-4 ring-white/10 z-35 scale-125' : 'w-3.5 h-3.5'
-                    } ${
-                      cafe.growthOpportunityScore >= 75 ? 'bg-[#EF4444] shadow-[0_0_12px_rgba(239,68,68,0.7)]' :
-                      cafe.growthOpportunityScore >= 55 ? 'bg-[#F59E0B] shadow-[0_0_9px_rgba(245,158,11,0.5)]' : 
-                      'bg-[#32D583] shadow-[0_0_6px_rgba(50,213,131,0.4)]'
-                    }`}>
-                      {/* Innermost pulsing light */}
-                      {(isHovered || isSelected) && (
-                        <div className="absolute inset-1 rounded-full bg-white animate-pulse" />
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-
-          </div>
-
-          {/* Hover tooltip anchor */}
-          {hoveredCafe && !enableClustering && (
-            <div
-              style={{
-                left: `${Math.min(getCoordinates(hoveredCafe.latitude, hoveredCafe.longitude).x, 75)}%`,
-                top: `${Math.min(getCoordinates(hoveredCafe.latitude, hoveredCafe.longitude).y, 55)}%`
-              }}
-              className="absolute z-40 pointer-events-none bg-[#0E1117]/95 backdrop-blur-md border border-white/[0.08] p-4.5 rounded-2xl shadow-2xl w-64 translate-x-4 translate-y-4 transition-all duration-300 font-mono text-xs animate-fadeIn"
-            >
-              <h5 className="text-xs font-bold text-white truncate leading-tight">{hoveredCafe.name}</h5>
-              <p className="text-[8px] text-white/40 mt-1 uppercase tracking-widest font-extrabold">{hoveredCafe.category} • {hoveredCafe.area}</p>
-              
-              <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-white/[0.06] text-[8px] tracking-widest uppercase font-extrabold">
-                <div>
-                  <span className="text-white/40 block">Digital score</span>
-                  <span className="text-[10px] font-bold text-[#4F8CFF] block mt-0.5">{hoveredCafe.digitalPresenceScore}/100</span>
-                </div>
-                <div>
-                  <span className="text-white/40 block">Opportunity</span>
-                  <span className="text-[10px] font-bold text-[#7C5CFF] block mt-0.5">{hoveredCafe.growthOpportunityScore}/100</span>
-                </div>
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between text-[8px] text-white/30 font-bold uppercase tracking-wider">
-                <span>★ {hoveredCafe.rating.toFixed(1)}</span>
-                <span>Reviews: {hoveredCafe.reviews.toLocaleString()}</span>
-              </div>
-            </div>
-          )}
 
         </div>
 
@@ -456,11 +543,9 @@ const MAX_LNG = 76.810;
             
             {/* Header / Cover Photo */}
             <div className="relative h-44 bg-[#0E1117]/90 overflow-hidden flex items-center justify-center">
-              {/* Premium dark pattern / abstract coffee illustration as business cover photo */}
               <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent z-10" />
               <div className="absolute inset-0 opacity-20 bg-[radial-gradient(ellipse_at_center,rgba(124,92,255,0.4),transparent_70%)] animate-pulse" />
               
-              {/* Simulated high-quality cafe image representation */}
               <div className="absolute inset-0 flex flex-col justify-between p-4 z-20">
                 <button 
                   onClick={() => setShowDirections(false)}
@@ -567,7 +652,7 @@ const MAX_LNG = 76.810;
       <div className="bg-[#141922]/25 border border-white/[0.06] p-4 rounded-xl text-[10px] font-mono text-white/40 flex gap-2.5 items-center shadow-inner">
         <Info className="w-4 h-4 text-[#4F8CFF] flex-shrink-0" />
         <p className="leading-relaxed">
-          <span className="font-bold text-[#4F8CFF] uppercase tracking-widest mr-1">GIS Intelligence Guidance:</span> Toggle display layers to run real-time heatmap densities or group markers into clustered geographic zones. Center of search radius is anchored to Sector 35. Click any individual marker pin to load its full telemetry coordinates, driving steps, and digital checklists.
+          <span className="font-bold text-[#4F8CFF] uppercase tracking-widest mr-1">GIS Intelligence Guidance:</span> Map is powered by real OpenStreetMap and custom canvas overlays. Toggle display layers to run real-time canvas heatmaps or group markers into clustered geographic zones. Center of search radius is anchored to Sector 35, Chandigarh. Click any marker to center the viewport and view detailed directions telemetry.
         </p>
       </div>
 
