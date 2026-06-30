@@ -1,7 +1,7 @@
 ## 🔗 Quick Links
 
 - 🌐 Live Demo: https://geobusiness-intelligence-platform-167784001474.asia-southeast1.run.app
-- 📂 Repository: https://github.com/USERNAME/REPO
+- 📂 Repository: https://github.com/devanshgautam0001-ai/geobusiness-intelligence-platform.git
 - 🐛 Report Bug
 - 💡 Request Feature
 
